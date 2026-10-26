@@ -156,19 +156,31 @@ function prepareEmbeddedAssistantTextForPhase(
     }
   }
   // Adjacent blocks in the same phase share markup state; a phase boundary stays explicit.
+  // Blocks separated only by thinking/reasoning blocks are one continuous answer:
+  // some providers interleave reasoning deltas with answer deltas, splitting a
+  // single word across blocks. Join those with ""; keep "\n" for truly adjacent
+  // blocks (markup-partitioned text that was deliberately separate).
   const groupedParts: { text: string; phase?: AssistantPhase; contentIndex: number }[] = [];
   for (const part of parts) {
-    const text = trimTextPreservingCode(part.text);
+    const rawText = part.text;
+    const text = trimTextPreservingCode(rawText);
+    if (!text) continue;
     const previous = groupedParts.at(-1);
-    if (
-      previous &&
-      previous.phase === part.phase &&
-      previous.contentIndex + 1 === part.contentIndex
-    ) {
-      previous.contentIndex = part.contentIndex;
-      if (text) {
-        previous.text += `\n${text}`;
+    if (previous && previous.phase === part.phase) {
+      const gapBlocks = msg.content.slice(previous.contentIndex + 1, part.contentIndex);
+      const gapIsOnlyThinking = gapBlocks.every(
+        (b) => b && typeof b === "object" && (b as any).type === "thinking",
+      );
+      const isAdjacent = previous.contentIndex + 1 === part.contentIndex;
+      if (gapIsOnlyThinking || isAdjacent) {
+        previous.contentIndex = part.contentIndex;
+        previous.text += isAdjacent ? `
+${rawText}` : rawText;
+        continue;
       }
+    }
+    if (text) groupedParts.push({ text: rawText, phase: part.phase, contentIndex: part.contentIndex });
+  }
     } else if (text) {
       groupedParts.push({ text, phase: part.phase, contentIndex: part.contentIndex });
     }
